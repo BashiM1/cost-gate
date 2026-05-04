@@ -29,6 +29,7 @@ from src.models import (
     ResourceCostEstimate,
 )
 from src.slack import build_breach_message, post_to_slack
+from src.eventbridge import emit_threshold_exceeded
 
 logging.basicConfig(
     level=logging.INFO,
@@ -217,12 +218,18 @@ async def notify_merge(estimate: CostEstimateResponse) -> dict:
     blocks = build_breach_message(estimate)
     if not await post_to_slack(webhook, blocks):
         raise HTTPException(status_code=502, detail="Slack webhook POST failed")
+    if not await emit_threshold_exceeded(estimate):
+        raise HTTPException(
+            status_code=502,
+            detail="EventBridge PutEvents failed (Slack already notified)",
+        )
     logger.info(
-        "notify-merge sent: repo=%s pr=%s total=%.2f threshold=%.2f",
+        "notify-merge sent: repo=%s pr=%s total=%.2f threshold=%.2f review_after_days=%d",
         estimate.pr_context.repository,
         estimate.pr_context.pr_number,
         estimate.total_monthly_cost_usd,
         estimate.threshold_usd_monthly,
+        estimate.review_after_days,
     )
     return {"status": "ok"}
 
@@ -248,6 +255,7 @@ async def cost_estimate(req: CostEstimateRequest) -> CostEstimateResponse:
         total_monthly_cost_usd=total,
         threshold_usd_monthly=req.threshold_usd_monthly,
         threshold_breached=breached,
+        review_after_days=req.review_after_days,
         summary_markdown=_build_summary(
             estimates, total, req.threshold_usd_monthly, breached,
         ),

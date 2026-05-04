@@ -65,6 +65,15 @@ class CostEstimateRequest(BaseModel):
         description="Output of `terraform show -json plan.bin`",
     )
     threshold_usd_monthly: float = Field(default=100.0, gt=0)
+    review_after_days: int = Field(
+        default=7,
+        gt=0,
+        description=(
+            "Days after which the remediation engine should fire a review prompt "
+            "if the breached resources are still running. Echoed verbatim into "
+            "the EventBridge detail when /notify-merge is called."
+        ),
+    )
     provider_regions: dict[str, str] = Field(
         default_factory=dict,
         description=(
@@ -105,6 +114,7 @@ class CostEstimateResponse(BaseModel):
     total_monthly_cost_usd: float
     threshold_usd_monthly: float
     threshold_breached: bool
+    review_after_days: int = 7
     summary_markdown: str
     timestamp: str
 

@@ -6,6 +6,12 @@
       "Effect": "Allow",
       "Action": "pricing:GetProducts",
       "Resource": "*"
+    },
+    {
+      "Sid": "PutCostGateEventsToHubBus",
+      "Effect": "Allow",
+      "Action": "events:PutEvents",
+      "Resource": "arn:aws:events:eu-west-2:582600397173:event-bus/finops-hub-bus"
     }
   ]
 }
