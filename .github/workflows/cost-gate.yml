@@ -94,7 +94,13 @@ jobs:
         id: post
         run: |
           set -euo pipefail
-          ID_TOKEN=$(gcloud auth print-identity-token --audiences="${{ vars.COST_GATE_URL }}")
+          # `--audiences` requires regular SA creds; under WIF gcloud holds an
+          # external-account credential, so impersonate the CI SA explicitly
+          # (the SA has roles/iam.serviceAccountTokenCreator on itself, set in
+          # terraform/wif.tf:ci_self_token_creator).
+          ID_TOKEN=$(gcloud auth print-identity-token \
+            --impersonate-service-account="${{ vars.CI_SERVICE_ACCOUNT }}" \
+            --audiences="${{ vars.COST_GATE_URL }}")
           http_code=$(curl -sS -o response.json -w '%{http_code}' \
             -X POST "${{ vars.COST_GATE_URL }}/api/v1/cost-estimate" \
             -H "authorization: Bearer ${ID_TOKEN}" \
