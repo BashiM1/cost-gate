@@ -9,10 +9,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import uuid
 from datetime import datetime, timezone
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 
 import src.adapters  # noqa: F401  — side-effect import wires the registry
 from src.adapters import get_adapter, registered_types
@@ -27,6 +28,7 @@ from src.models import (
     PricingSource,
     ResourceCostEstimate,
 )
+from src.slack import build_breach_message, post_to_slack
 
 logging.basicConfig(
     level=logging.INFO,
@@ -190,6 +192,39 @@ async def healthz() -> HealthResponse:
 @app.get("/api/v1/adapters")
 async def list_adapters() -> dict:
     return {"registered": registered_types()}
+
+
+@app.post("/api/v1/notify-merge")
+async def notify_merge(estimate: CostEstimateResponse) -> dict:
+    """Forward a breach notification to the FinOps Slack channel.
+
+    Called by the GitHub Action only after a PR merge AND a confirmed
+    breach. The Action passes the same response body it already has from
+    `/api/v1/cost-estimate`. The endpoint defensively re-checks
+    `threshold_breached` so an accidental call cannot Slack-spam.
+    """
+    if not estimate.threshold_breached:
+        raise HTTPException(
+            status_code=400,
+            detail="threshold_breached must be true; refusing to notify",
+        )
+    webhook = os.environ.get("SLACK_WEBHOOK_URL")
+    if not webhook:
+        raise HTTPException(
+            status_code=503,
+            detail="SLACK_WEBHOOK_URL not configured on the service",
+        )
+    blocks = build_breach_message(estimate)
+    if not await post_to_slack(webhook, blocks):
+        raise HTTPException(status_code=502, detail="Slack webhook POST failed")
+    logger.info(
+        "notify-merge sent: repo=%s pr=%s total=%.2f threshold=%.2f",
+        estimate.pr_context.repository,
+        estimate.pr_context.pr_number,
+        estimate.total_monthly_cost_usd,
+        estimate.threshold_usd_monthly,
+    )
+    return {"status": "ok"}
 
 
 @app.post("/api/v1/cost-estimate", response_model=CostEstimateResponse)
