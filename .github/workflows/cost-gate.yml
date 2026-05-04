@@ -23,6 +23,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Authenticate before terraform plan so the google provider can
+      # initialize via ADC. Default token_format=access_token also
+      # leaves gcloud usable for the ID-token step further down.
+      - id: gcp-auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.WIF_PROVIDER }}
+          service_account: ${{ vars.CI_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
       - uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: "1.9.8"
@@ -30,6 +41,13 @@ jobs:
 
       - name: Terraform init / plan / show
         working-directory: ${{ env.TF_DIR }}
+        env:
+          # Plan-only — no AWS API calls. The provider still needs *some*
+          # creds to initialize even with skip_credentials_validation.
+          AWS_ACCESS_KEY_ID: noop-plan-only
+          AWS_SECRET_ACCESS_KEY: noop-plan-only
+          AWS_REGION: eu-west-2
+          AWS_EC2_METADATA_DISABLED: "true"
         run: |
           terraform init -backend=false -input=false
           terraform plan -input=false -refresh=false -out=plan.bin
@@ -72,21 +90,11 @@ jobs:
           print(f"provider_regions={regions}")
           PY
 
-      - id: gcp-auth
-        uses: google-github-actions/auth@v2
-        with:
-          workload_identity_provider: ${{ vars.WIF_PROVIDER }}
-          service_account: ${{ vars.CI_SERVICE_ACCOUNT }}
-          token_format: id_token
-          id_token_audience: ${{ vars.COST_GATE_URL }}
-          id_token_include_email: true
-
       - name: POST to cost-gate
         id: post
-        env:
-          ID_TOKEN: ${{ steps.gcp-auth.outputs.id_token }}
         run: |
           set -euo pipefail
+          ID_TOKEN=$(gcloud auth print-identity-token --audiences="${{ vars.COST_GATE_URL }}")
           http_code=$(curl -sS -o response.json -w '%{http_code}' \
             -X POST "${{ vars.COST_GATE_URL }}/api/v1/cost-estimate" \
             -H "authorization: Bearer ${ID_TOKEN}" \

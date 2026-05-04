@@ -57,3 +57,12 @@ resource "google_cloud_run_v2_service_iam_member" "ci_invoker" {
   role     = "roles/run.invoker"
   member   = "serviceAccount:${google_service_account.ci.email}"
 }
+
+# Self-binding so the CI SA can mint ID tokens for itself via
+# iamcredentials.generateIdToken (used by `gcloud auth print-identity-token`
+# in the workflow to authenticate the Cloud Run call).
+resource "google_service_account_iam_member" "ci_self_token_creator" {
+  service_account_id = google_service_account.ci.name
+  role               = "roles/iam.serviceAccountTokenCreator"
+  member             = "serviceAccount:${google_service_account.ci.email}"
+}
