@@ -1,0 +1,125 @@
+name: Cost Gate
+
+on:
+  pull_request:
+    paths:
+      - "examples/demo-tf/**"
+      - "src/**"
+      - "terraform/**"
+      - ".github/workflows/cost-gate.yml"
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+  pull-requests: write
+
+jobs:
+  cost-gate:
+    runs-on: ubuntu-latest
+    env:
+      TF_DIR: examples/demo-tf
+      THRESHOLD_USD_MONTHLY: "100"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9.8"
+          terraform_wrapper: false
+
+      - name: Terraform init / plan / show
+        working-directory: ${{ env.TF_DIR }}
+        run: |
+          terraform init -backend=false -input=false
+          terraform plan -input=false -refresh=false -out=plan.bin
+          terraform show -json plan.bin > plan.json
+
+      - name: Build cost-gate request body
+        id: build
+        env:
+          PR_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_ACTOR: ${{ github.actor }}
+        run: |
+          python3 - <<'PY'
+          import json, os, pathlib
+          plan = json.load(open(f"{os.environ['TF_DIR']}/plan.json"))
+          pc = plan.get("configuration", {}).get("provider_config", {}) or {}
+          regions = {}
+          for key in ("aws", "google"):
+              try:
+                  regions[key] = pc[key]["expressions"]["region"]["constant_value"]
+              except (KeyError, TypeError):
+                  pass
+          # Fallback per the contract — never POST without regions populated.
+          regions.setdefault("aws", "eu-west-2")
+          regions.setdefault("google", "us-central1")
+
+          body = {
+              "pr_context": {
+                  "repository": os.environ["PR_REPO"],
+                  "pr_number": int(os.environ["PR_NUMBER"]),
+                  "head_sha": os.environ["PR_SHA"],
+                  "actor": os.environ["PR_ACTOR"],
+              },
+              "threshold_usd_monthly": float(os.environ["THRESHOLD_USD_MONTHLY"]),
+              "provider_regions": regions,
+              "terraform_plan": plan,
+          }
+          pathlib.Path("request.json").write_text(json.dumps(body))
+          print(f"provider_regions={regions}")
+          PY
+
+      - id: gcp-auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.WIF_PROVIDER }}
+          service_account: ${{ vars.CI_SERVICE_ACCOUNT }}
+          token_format: id_token
+          id_token_audience: ${{ vars.COST_GATE_URL }}
+          id_token_include_email: true
+
+      - name: POST to cost-gate
+        id: post
+        env:
+          ID_TOKEN: ${{ steps.gcp-auth.outputs.id_token }}
+        run: |
+          set -euo pipefail
+          http_code=$(curl -sS -o response.json -w '%{http_code}' \
+            -X POST "${{ vars.COST_GATE_URL }}/api/v1/cost-estimate" \
+            -H "authorization: Bearer ${ID_TOKEN}" \
+            -H 'content-type: application/json' \
+            --data-binary @request.json)
+          echo "http_code=${http_code}" >> "$GITHUB_OUTPUT"
+          if [ "${http_code}" != "200" ]; then
+            echo "::error::cost-gate returned HTTP ${http_code}"
+            cat response.json
+            exit 1
+          fi
+          {
+            echo "summary<<EOF"
+            python3 -c "import json; print(json.load(open('response.json'))['summary_markdown'])"
+            echo "EOF"
+            python3 -c "import json; r=json.load(open('response.json')); print(f\"breached={str(r['threshold_breached']).lower()}\"); print(f\"total={r['total_monthly_cost_usd']}\")"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Comment on PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const summary = `${{ steps.post.outputs.summary }}`;
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: summary,
+            });
+
+      - name: Fail on threshold breach
+        if: steps.post.outputs.breached == 'true'
+        run: |
+          echo "::error::Cost threshold breached: \$${{ steps.post.outputs.total }}/mo"
+          exit 1
