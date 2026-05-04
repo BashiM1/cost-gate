@@ -34,7 +34,7 @@ provider "google" {
 
 resource "aws_instance" "demo" {
   ami           = "ami-00000000000000000"
-  instance_type = "t3.small"
+  instance_type = "t3.medium"
   tenancy       = "default"
 
   tags = {
