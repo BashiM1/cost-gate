@@ -51,6 +51,7 @@ service-account*.json
 
 # Claude Code workspace
 .claude/
+CLAUDE.md
 
 # IDE
 .vscode/settings.json
