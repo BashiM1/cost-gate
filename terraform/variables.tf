@@ -25,3 +25,15 @@ variable "aws_pricing_role_arn" {
   type        = string
   default     = "arn:aws:iam::582600397173:role/gcp-cost-gate-pricing"
 }
+
+variable "aws_account_id" {
+  description = "AWS account hosting the finops-agentic-remediation stack. Used by the AWS→GCP WIF provider to scope trust to a single AWS account."
+  type        = string
+  default     = "582600397173"
+}
+
+variable "aws_notifier_role_name" {
+  description = "IAM role name (not ARN) of the AWS Lambda permitted to federate into the aws-recommender-reader SA. Pinned in the WIF provider's attribute_condition; changing the AWS-side role name requires re-applying TF."
+  type        = string
+  default     = "finops-followup-notifier-role"
+}

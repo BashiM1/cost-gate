@@ -8,6 +8,7 @@ locals {
     "sts.googleapis.com",
     "cloudbilling.googleapis.com",
     "cloudresourcemanager.googleapis.com",
+    "recommender.googleapis.com",
   ]
 }
 

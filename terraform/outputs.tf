@@ -27,3 +27,13 @@ output "ci_service_account_email" {
   description = "Email of the CI SA that the GitHub Action impersonates"
   value       = google_service_account.ci.email
 }
+
+output "aws_finops_bridge_provider_resource_name" {
+  description = "Full WIF provider resource path for AWS→GCP. Pass to the AWS notifier Lambda as GCP_WIF_PROVIDER_RESOURCE_NAME."
+  value       = google_iam_workload_identity_pool_provider.aws_finops_bridge.name
+}
+
+output "aws_recommender_reader_sa_email" {
+  description = "Service account the AWS Lambda impersonates via WIF to call GCP Recommender."
+  value       = google_service_account.aws_recommender_reader.email
+}
